@@ -107,6 +107,93 @@ class AIService {
   }
 
   /**
+   * Generate SQL query from natural language question and database schema (streaming)
+   * @param {string} question - Natural language question
+   * @param {Object} schema - Database schema object
+   * @param {string} databaseType - Database type (default: 'postgresql')
+   * @returns {Promise<Object>} OpenAI streaming response object
+   */
+  async generateSQLStream(question, schema, databaseType = 'postgresql') {
+    try {
+      // Validate inputs
+      if (!question || typeof question !== 'string') {
+        throw new Error('Question must be a non-empty string');
+      }
+
+      if (!schema || typeof schema !== 'object') {
+        throw new Error('Schema must be a valid object');
+      }
+
+      if (!config.OPENAI_API_KEY) {
+        throw new Error('OPENAI_API_KEY is required but not configured');
+      }
+
+      // Format schema for prompt
+      const formattedSchema = this.formatSchema(schema);
+
+      // Construct system prompt for streaming
+      const systemPrompt = `You are a SQL expert. Generate a ${databaseType} SQL query based on the user's question and the provided database schema.
+
+Database Schema:
+${formattedSchema}
+
+Rules:
+1. Generate ONLY SELECT queries (no INSERT, UPDATE, DELETE, DROP, etc.)
+2. Use exact table and column names from the schema provided
+3. Use proper ${databaseType} syntax
+4. Include appropriate WHERE clauses when filtering is needed
+5. Use proper JOIN syntax when querying multiple tables
+6. Add comments to explain complex logic
+7. Do not include any dangerous SQL keywords or injection patterns
+8. Keep queries simple and focused on data retrieval
+
+User Question: ${question}
+
+Please provide:
+1. The SQL query
+2. A brief explanation of what the query does
+
+Format your response as:
+SQL: [your query here]
+Explanation: [your explanation here]`;
+
+      // Call OpenAI API with streaming
+      const response = await this.openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: systemPrompt
+          }
+        ],
+        stream: true,
+        temperature: 0.3,
+        max_tokens: 1000
+      });
+
+      console.log(`🤖 Starting streaming SQL generation for question: "${question}"`);
+
+      return response;
+
+    } catch (error) {
+      console.error('❌ AI service streaming error:', error.message);
+      
+      // Provide descriptive error messages
+      if (error.code === 'insufficient_quota') {
+        throw new Error('OpenAI API quota exceeded - check your billing');
+      } else if (error.code === 'invalid_api_key') {
+        throw new Error('Invalid OpenAI API key - check your configuration');
+      } else if (error.code === 'rate_limit_exceeded') {
+        throw new Error('OpenAI API rate limit exceeded - please try again later');
+      } else if (error.message.includes('timeout')) {
+        throw new Error('OpenAI API request timed out - please try again');
+      } else {
+        throw new Error(`AI service streaming error: ${error.message}`);
+      }
+    }
+  }
+
+  /**
    * Generate SQL query from natural language question and database schema
    * @param {string} question - Natural language question
    * @param {Object} schema - Database schema object
