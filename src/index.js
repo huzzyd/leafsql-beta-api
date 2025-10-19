@@ -15,10 +15,38 @@ const PORT = config.PORT;
 
 // Middleware
 app.use(helmet());
-app.use(cors({
-  origin: config.ALLOWED_ORIGINS_ARRAY,
+
+// CORS configuration with wildcard support
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or Postman)
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    // Check if origin matches exact allowed origins
+    if (config.ALLOWED_ORIGINS_ARRAY.includes(origin)) {
+      return callback(null, true);
+    }
+
+    // Check wildcard patterns for Lovable domains
+    const lovablePatterns = [
+      /^https:\/\/.*\.lovable\.app$/,
+      /^https:\/\/.*\.lovableproject\.com$/
+    ];
+
+    const isLovableDomain = lovablePatterns.some(pattern => pattern.test(origin));
+    if (isLovableDomain) {
+      return callback(null, true);
+    }
+
+    // Origin not allowed
+    callback(new Error('Not allowed by CORS'));
+  },
   credentials: true
-}));
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
