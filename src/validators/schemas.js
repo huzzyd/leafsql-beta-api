@@ -55,8 +55,59 @@ const workspaceIdParamSchema = Joi.object({
     })
 });
 
+// Query history schemas
+const queryHistoryGetSchema = Joi.object({
+  workspaceId: Joi.string().uuid().optional()
+    .messages({
+      'string.guid': 'workspaceId must be a valid UUID'
+    }),
+  limit: Joi.number().integer().min(1).max(100).optional()
+    .messages({
+      'number.base': 'limit must be a number',
+      'number.integer': 'limit must be an integer',
+      'number.min': 'limit must be at least 1',
+      'number.max': 'limit must be 100 or less'
+    }),
+  offset: Joi.number().integer().min(0).optional()
+    .messages({
+      'number.base': 'offset must be a number',
+      'number.integer': 'offset must be an integer',
+      'number.min': 'offset must be 0 or greater'
+    }),
+  favoritesOnly: Joi.string().valid('true', 'false').optional()
+    .messages({
+      'any.only': 'favoritesOnly must be either "true" or "false"'
+    })
+});
+
+const queryHistoryIdParamSchema = Joi.object({
+  id: Joi.string().uuid().required()
+    .messages({
+      'string.guid': 'queryId must be a valid UUID',
+      'any.required': 'queryId is required',
+      'string.base': 'queryId must be a valid UUID'
+    })
+});
+
+const queryHistoryStatsSchema = Joi.object({
+  workspaceId: Joi.string().uuid().optional()
+    .messages({
+      'string.guid': 'workspaceId must be a valid UUID'
+    }),
+  days: Joi.number().integer().min(1).max(365).optional()
+    .messages({
+      'number.base': 'days must be a number',
+      'number.integer': 'days must be an integer',
+      'number.min': 'days must be at least 1',
+      'number.max': 'days must be 365 or less'
+    })
+});
+
 module.exports = {
   queryExecuteSchema,
   workspaceCreateSchema,
-  workspaceIdParamSchema
+  workspaceIdParamSchema,
+  queryHistoryGetSchema,
+  queryHistoryIdParamSchema,
+  queryHistoryStatsSchema
 };

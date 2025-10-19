@@ -2,6 +2,7 @@ const express = require('express');
 const databaseService = require('../services/database');
 const aiService = require('../services/ai');
 const workspaceService = require('../services/workspace');
+const queryHistoryService = require('../services/queryHistory');
 const { validate } = require('../middleware/validation');
 const { queryExecuteSchema } = require('../validators/schemas');
 
@@ -81,6 +82,23 @@ router.post('/execute', validate(queryExecuteSchema), async (req, res, next) => 
       sql
     );
 
+    // Save query to history (async, don't wait)
+    const historyData = {
+      userId,
+      workspaceId,
+      question,
+      sql,
+      explanation,
+      databaseProvider: workspace.database_provider,
+      executionTime: queryResult.executionTime,
+      rowCount: queryResult.rowCount,
+      success: true
+    };
+
+    queryHistoryService.saveQuery(historyData).catch(error => {
+      console.warn(`⚠️  Failed to save query to history:`, error.message);
+    });
+
     // Update workspace last used (async, don't wait)
     workspaceService.updateLastUsed(workspaceId, userId).catch(error => {
       console.warn(`⚠️  Failed to update last used for workspace ${workspaceId}:`, error.message);
@@ -102,6 +120,36 @@ router.post('/execute', validate(queryExecuteSchema), async (req, res, next) => 
 
   } catch (error) {
     console.error('❌ Query execution error:', error.message);
+    
+    // Try to save failed query to history (async, don't wait)
+    try {
+      const { workspaceId, question } = req.body;
+      const userId = req.user.id;
+      
+      // Get workspace info if available
+      if (workspaceId && userId) {
+        workspaceService.getWorkspace(workspaceId, userId).then(workspace => {
+          const historyData = {
+            userId,
+            workspaceId,
+            question,
+            sql: null,
+            explanation: null,
+            databaseProvider: workspace?.database_provider || 'unknown',
+            executionTime: 0,
+            rowCount: 0,
+            success: false,
+            errorMessage: error.message
+          };
+
+          return queryHistoryService.saveQuery(historyData);
+        }).catch(historyError => {
+          console.warn(`⚠️  Failed to save failed query to history:`, historyError.message);
+        });
+      }
+    } catch (historyError) {
+      console.warn(`⚠️  Error saving failed query to history:`, historyError.message);
+    }
     
     // Pass error to Express error handler
     next(error);
@@ -193,42 +241,74 @@ router.post('/execute/stream', validate(queryExecuteSchema), async (req, res, ne
       workspace.database_provider
     );
     
+    let fullResponse = '';
     let sqlBuffer = '';
     let explanationBuffer = '';
-    let isSQL = false;
-    let isExplanation = false;
+    let currentSection = null; // 'sql' or 'explanation'
 
     // Process streaming response
     for await (const chunk of stream) {
       const content = chunk.choices[0]?.delta?.content || '';
+      fullResponse += content;
       
-      if (content.includes('SQL:')) {
-        isSQL = true;
-        isExplanation = false;
-        continue;
+      // Check for section markers in the accumulated response
+      const lowerResponse = fullResponse.toLowerCase();
+      
+      // Look for SQL section start
+      if (lowerResponse.includes('sql:') && !sqlBuffer) {
+        const sqlStart = lowerResponse.indexOf('sql:');
+        const sqlContent = fullResponse.substring(sqlStart + 4);
+        
+        // Check if we have explanation marker to know where SQL ends
+        const expStart = lowerResponse.indexOf('explanation:');
+        if (expStart > sqlStart) {
+          // We have both markers, extract SQL content
+          sqlBuffer = sqlContent.substring(0, expStart - sqlStart - 4).trim();
+          currentSection = 'explanation';
+        } else {
+          // Only SQL marker found, start accumulating
+          currentSection = 'sql';
+          sqlBuffer = sqlContent.trim();
+        }
       }
       
-      if (content.includes('Explanation:')) {
-        isSQL = false;
-        isExplanation = true;
-        continue;
+      // Look for explanation section start
+      if (lowerResponse.includes('explanation:') && !explanationBuffer) {
+        const expStart = lowerResponse.indexOf('explanation:');
+        explanationBuffer = fullResponse.substring(expStart + 12).trim();
+        currentSection = 'explanation';
       }
 
-      if (isSQL) {
-        sqlBuffer += content;
+      // Send streaming updates based on current section
+      if (currentSection === 'sql' && sqlBuffer) {
         res.write(`data: ${JSON.stringify({ 
           type: 'sql', 
           content: sqlBuffer,
           partial: true 
         })}\n\n`);
-      } else if (isExplanation) {
-        explanationBuffer += content;
+      } else if (currentSection === 'explanation' && explanationBuffer) {
         res.write(`data: ${JSON.stringify({ 
           type: 'explanation', 
           content: explanationBuffer,
           partial: true 
         })}\n\n`);
       }
+    }
+
+    // Final parsing - extract clean SQL and explanation
+    const lowerResponse = fullResponse.toLowerCase();
+    const sqlStart = lowerResponse.indexOf('sql:');
+    const expStart = lowerResponse.indexOf('explanation:');
+    
+    if (sqlStart !== -1) {
+      const sqlEnd = expStart !== -1 ? expStart : fullResponse.length;
+      const sqlContent = fullResponse.substring(sqlStart + 4, sqlEnd).trim();
+      // Clean up SQL content (remove any remaining explanation markers)
+      sqlBuffer = sqlContent.replace(/explanation:.*$/i, '').trim();
+    }
+    
+    if (expStart !== -1) {
+      explanationBuffer = fullResponse.substring(expStart + 12).trim();
     }
 
     // Validate the complete SQL
@@ -270,6 +350,23 @@ router.post('/execute/stream', validate(queryExecuteSchema), async (req, res, ne
         executionTime: `${queryResult.executionTime}ms`
       })}\n\n`);
 
+      // Save query to history (async, don't wait)
+      const historyData = {
+        userId,
+        workspaceId,
+        question,
+        sql: finalSQL,
+        explanation: explanationBuffer.trim(),
+        databaseProvider: workspace.database_provider,
+        executionTime: queryResult.executionTime,
+        rowCount: queryResult.rowCount,
+        success: true
+      };
+
+      queryHistoryService.saveQuery(historyData).catch(error => {
+        console.warn(`⚠️  Failed to save query to history:`, error.message);
+      });
+
       // Update workspace last used (async, don't wait)
       workspaceService.updateLastUsed(workspaceId, userId).catch(error => {
         console.warn(`⚠️  Failed to update last used for workspace ${workspaceId}:`, error.message);
@@ -290,6 +387,37 @@ router.post('/execute/stream', validate(queryExecuteSchema), async (req, res, ne
 
   } catch (error) {
     console.error('❌ Streaming query execution error:', error.message);
+    
+    // Try to save failed query to history (async, don't wait)
+    try {
+      const { workspaceId, question } = req.body;
+      const userId = req.user.id;
+      
+      // Get workspace info if available
+      if (workspaceId && userId) {
+        workspaceService.getWorkspace(workspaceId, userId).then(workspace => {
+          const historyData = {
+            userId,
+            workspaceId,
+            question,
+            sql: null,
+            explanation: null,
+            databaseProvider: workspace?.database_provider || 'unknown',
+            executionTime: 0,
+            rowCount: 0,
+            success: false,
+            errorMessage: error.message
+          };
+
+          return queryHistoryService.saveQuery(historyData);
+        }).catch(historyError => {
+          console.warn(`⚠️  Failed to save failed streaming query to history:`, historyError.message);
+        });
+      }
+    } catch (historyError) {
+      console.warn(`⚠️  Error saving failed streaming query to history:`, historyError.message);
+    }
+    
     res.write(`data: ${JSON.stringify({ 
       type: 'error', 
       message: error.message 

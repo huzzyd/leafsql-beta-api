@@ -8,6 +8,7 @@ const { errorHandler } = require('./middleware/errorHandler');
 const databaseService = require('./services/database');
 const queryRoutes = require('./routes/query');
 const workspaceRoutes = require('./routes/workspace');
+const queryHistoryRoutes = require('./routes/queryHistory');
 
 const app = express();
 const PORT = config.PORT;
@@ -29,6 +30,7 @@ app.get('/health', (req, res) => {
 // API Routes
 app.use('/api/query', authenticateRequest, queryRoutes);
 app.use('/api/workspaces', authenticateRequest, workspaceRoutes);
+app.use('/api/query/history', authenticateRequest, queryHistoryRoutes);
 
 // Global error handler (MUST BE LAST)
 app.use(errorHandler);
