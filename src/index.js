@@ -27,10 +27,11 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
-// API Routes
-app.use('/api/query', authenticateRequest, queryRoutes);
+// API Routes - IMPORTANT: More specific routes MUST come before general routes
+// Otherwise /api/query will catch /api/query/history requests
+app.use('/api/query/history', authenticateRequest, queryHistoryRoutes);  // SPECIFIC route first
+app.use('/api/query', authenticateRequest, queryRoutes);                 // GENERAL route second
 app.use('/api/workspaces', authenticateRequest, workspaceRoutes);
-app.use('/api/query/history', authenticateRequest, queryHistoryRoutes);
 
 // Global error handler (MUST BE LAST)
 app.use(errorHandler);
