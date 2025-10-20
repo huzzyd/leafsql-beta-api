@@ -50,6 +50,21 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Root endpoint
+app.get('/', (req, res) => {
+  res.status(200).json({ 
+    name: 'LeafSQL Beta API',
+    version: '1.0.0',
+    status: 'running',
+    endpoints: {
+      health: '/health',
+      query: '/api/query/execute',
+      workspaces: '/api/workspaces',
+      history: '/api/query/history'
+    }
+  });
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
